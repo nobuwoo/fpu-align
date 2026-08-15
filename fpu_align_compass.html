@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>FPU方位計 / ALIGN COMPASS</title>
+<style>
+  :root{
+    --bg:#0a0e13;
+    --panel:#0f151c;
+    --line:#1e2833;
+    --amber:#ff8a3d;
+    --amber-dim:#8a4f24;
+    --cyan:#2fe0c5;
+    --text:#e6ecf0;
+    --sub:#6b7885;
+    --danger:#ff4d4d;
+    --mono: "SF Mono","JetBrains Mono","Consolas",monospace;
+    --sans: -apple-system,"Hiragino Sans","Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;padding:0;height:100%;
+    background:radial-gradient(ellipse at 50% -10%, #131c25 0%, var(--bg) 60%);
+    color:var(--text);
+    font-family:var(--sans);
+    -webkit-tap-highlight-color:transparent;
+    overscroll-behavior:none;
+  }
+  .wrap{
+    max-width:480px;margin:0 auto;
+    min-height:100dvh;
+    display:flex;flex-direction:column;
+    padding:env(safe-area-inset-top,16px) 16px calc(env(safe-area-inset-bottom,16px) + 16px);
+  }
+  header{
+    display:flex;justify-content:space-between;align-items:baseline;
+    padding:8px 4px 18px;
+    border-bottom:1px solid var(--line);
+    margin-bottom:18px;
+  }
+  header h1{
+    font-size:13px;letter-spacing:.14em;font-weight:600;
+    color:var(--sub);text-transform:uppercase;margin:0;
+  }
+  header .status{
+    font-family:var(--mono);font-size:11px;letter-spacing:.05em;
+  }
+  .dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;background:var(--sub);}
+  .dot.ok{background:var(--cyan);box-shadow:0 0 6px var(--cyan);}
+  .dot.bad{background:var(--danger);box-shadow:0 0 6px var(--danger);}
+
+  .targets{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;}
+  .chip{
+    flex:1;min-width:110px;
+    background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:10px 12px;
+    font-size:13px;color:var(--sub);cursor:pointer;
+    transition:.15s;text-align:center;font-weight:600;letter-spacing:.02em;
+  }
+  .chip.active{
+    border-color:var(--amber);color:var(--amber);
+    background:linear-gradient(180deg,rgba(255,138,61,.12),rgba(255,138,61,.03));
+  }
+
+  .dial-area{
+    position:relative;
+    aspect-ratio:1/1;
+    margin:8px auto 20px;
+    width:min(78vw,340px);
+    transition:opacity .3s ease;
+  }
+  svg.dial{width:100%;height:100%;display:block;}
+  .bearing-readout{
+    position:absolute;inset:0;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    pointer-events:none;
+  }
+  .bearing-readout .deg{
+    font-family:var(--mono);font-weight:700;
+    font-size:clamp(38px,10vw,52px);
+    color:var(--text);letter-spacing:-.02em;
+    line-height:1;
+  }
+  .bearing-readout .deg span{font-size:.45em;color:var(--sub);margin-left:2px;}
+  .bearing-readout .diff{
+    font-family:var(--mono);font-size:13px;margin-top:6px;
+    padding:3px 10px;border-radius:20px;
+    background:rgba(255,255,255,.04);
+  }
+  .diff.locked{color:var(--cyan);background:rgba(47,224,197,.12);}
+  .diff.left::before{content:"◀ 左へ ";}
+  .diff.right::before{content:"右へ ▶ ";}
+  .diff.locked::before{content:"● ロックオン ";}
+
+  .readouts{
+    display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;
+  }
+  .card{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:12px 14px;
+  }
+  .card .label{font-size:10px;color:var(--sub);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px;}
+  .card .value{font-family:var(--mono);font-size:20px;font-weight:600;}
+  .card .value span{font-size:12px;color:var(--sub);font-weight:400;}
+
+  .custom-target{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:12px 14px;margin-bottom:16px;
+  }
+  .custom-target .label{font-size:10px;color:var(--sub);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;}
+  .custom-target .row{display:flex;gap:8px;}
+  .custom-target input{
+    flex:1;background:#070a0d;border:1px solid var(--line);border-radius:8px;
+    color:var(--text);font-family:var(--mono);font-size:13px;padding:8px;min-width:0;
+  }
+  .custom-target button{
+    background:var(--amber-dim);color:#ffe3cc;border:none;border-radius:8px;
+    padding:8px 14px;font-size:13px;font-weight:600;white-space:nowrap;
+  }
+
+  .start-btn{
+    background:var(--amber);color:#1a0f05;border:none;border-radius:14px;
+    padding:16px;font-size:15px;font-weight:700;letter-spacing:.03em;
+    margin-top:auto;
+  }
+  .footnote{
+    font-size:11px;color:var(--sub);text-align:center;margin-top:14px;line-height:1.6;
+  }
+  .hidden{display:none !important;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>FPU Align / 方位計</h1>
+    <div class="status">
+      <span id="gpsStatus"><span class="dot" id="gpsDot"></span>GPS</span>
+      &nbsp;&nbsp;
+      <span id="compassStatus"><span class="dot" id="compassDot"></span>COMPASS</span>
+    </div>
+  </header>
+
+  <div class="targets" id="targets">
+    <div class="chip active" data-name="筑波山" data-lat="36.22641418059821" data-lon="140.0979002119744">筑波山</div>
+    <div class="chip" data-name="大山" data-lat="35.441518973884634" data-lon="139.23078736517007">大山</div>
+    <div class="chip" data-name="汐留" data-lat="35.664360581500084" data-lon="139.75983725509468">汐留</div>
+    <div class="chip" data-name="東京タワー" data-lat="35.65866387229374" data-lon="139.74534937946632">東京タワー</div>
+    <div class="chip" data-name="SCB" data-lat="35.69170268834486" data-lon="139.69548437252524">SCB</div>
+    <div class="chip" data-name="スカイツリー" data-lat="35.70999731112398" data-lon="139.81059013827362">スカイツリー</div>
+  </div>
+
+  <div id="secWarning" class="hidden" style="background:#2a1414;border:1px solid #ff4d4d;border-radius:10px;padding:10px 12px;margin-bottom:16px;font-size:12px;color:#ffb3b3;line-height:1.6;">
+    ⚠ このページは安全な接続(HTTPS)で開かれていません。GPS・コンパスはブラウザの仕様上、多くの場合ここで動作を停止します。詳しくは一番下の説明を見てください。
+  </div>
+  <div class="card" style="margin-bottom:16px;">
+    <div class="label">デバッグ情報</div>
+    <div class="value" id="debugInfo" style="font-size:12px;line-height:1.8;">まだ開始していません</div>
+  </div>
+
+  <div class="dial-area">
+    <svg class="dial" viewBox="0 0 300 300">
+      <circle cx="150" cy="150" r="140" fill="none" stroke="#1e2833" stroke-width="1"/>
+      <circle cx="150" cy="150" r="108" fill="none" stroke="#1e2833" stroke-width="1"/>
+      <g id="tickGroup"></g>
+      <g id="rose" style="transform-origin:150px 150px;">
+        <text x="150" y="30" text-anchor="middle" font-family="monospace" font-size="15" font-weight="700" fill="#6b7885">N</text>
+        <text x="270" y="155" text-anchor="middle" font-family="monospace" font-size="13" fill="#3d4750">E</text>
+        <text x="150" y="278" text-anchor="middle" font-family="monospace" font-size="13" fill="#3d4750">S</text>
+        <text x="30" y="155" text-anchor="middle" font-family="monospace" font-size="13" fill="#3d4750">W</text>
+      </g>
+      <!-- target arrow, rotates independently to point at target relative to device heading -->
+      <g id="arrowGroup" style="transform-origin:150px 150px;">
+        <polygon points="150,52 138,96 150,84 162,96" fill="#ff8a3d"/>
+        <line x1="150" y1="96" x2="150" y2="150" stroke="#ff8a3d" stroke-width="2" opacity="0.5"/>
+      </g>
+      <circle cx="150" cy="150" r="5" fill="#e6ecf0"/>
+    </svg>
+    <div class="bearing-readout">
+      <div class="deg" id="degReadout">--<span>°</span></div>
+      <div class="diff" id="diffReadout">端末の向きを取得中…</div>
+    </div>
+  </div>
+
+  <div class="readouts">
+    <div class="card">
+      <div class="label">目標方位</div>
+      <div class="value" id="targetBearing">--<span>°</span></div>
+    </div>
+    <div class="card">
+      <div class="label">直線距離</div>
+      <div class="value" id="targetDistance">--<span>km</span></div>
+    </div>
+  </div>
+
+  <div class="custom-target">
+    <div class="label">カスタム地点を登録（移動中継車など）</div>
+    <div class="row">
+      <input type="text" id="customLat" placeholder="緯度 例: 35.658" inputmode="decimal">
+      <input type="text" id="customLon" placeholder="経度 例: 139.741" inputmode="decimal">
+      <button id="addCustom">登録</button>
+    </div>
+  </div>
+
+  <button class="start-btn" id="startBtn">現在地とコンパスを取得して開始</button>
+  <div class="footnote">
+    掲載中の座標は概算値です。実際の運用前に現地・公式資料で必ず確認してください。<br>
+    磁北→真北の補正値（偏角）は関東エリア目安（-7.5°）で計算しています。<br>
+    「コンパスが緑にならない」場合、まずデバッグ情報の表示を確認してください。多くの場合、HTTPS化されていないことが原因です（無料のホスティングで解決できます。作りたい場合は教えてください）。
+  </div>
+</div>
+
+<script>
+(function(){
+  let targetLat = 36.22641418059821, targetLon = 140.0979002119744, targetName = "筑波山";
+  let myLat = null, myLon = null;
+  let heading = null; // 真北基準 (度)
+  let watchId = null;
+  const DECLINATION = -7.5; // 関東エリア目安。西偏なので真北に対しマイナス補正
+
+  const $ = (id) => document.getElementById(id);
+  const gpsDot = $('gpsDot'), compassDot = $('compassDot');
+  const debugInfo = $('debugInfo');
+  let debugLines = {gps:'GPS: 未取得', ori:'コンパス: 未取得', mode:'', secure:''};
+  function paintDebug(){
+    debugInfo.innerHTML = Object.values(debugLines).filter(Boolean).join('<br>');
+  }
+  if(location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1'){
+    $('secWarning').classList.remove('hidden');
+    debugLines.secure = '⚠ 非HTTPS環境: protocol=' + location.protocol;
+  } else {
+    debugLines.secure = '接続: ' + location.protocol + '（OK）';
+  }
+  paintDebug();
+  const degReadout = $('degReadout'), diffReadout = $('diffReadout');
+  const targetBearingEl = $('targetBearing'), targetDistanceEl = $('targetDistance');
+  const arrowGroup = $('arrowGroup'), roseGroup = $('rose');
+
+  function toRad(d){return d*Math.PI/180;}
+  function toDeg(r){return r*180/Math.PI;}
+
+  function bearingTo(lat1,lon1,lat2,lon2){
+    const φ1=toRad(lat1), φ2=toRad(lat2), Δλ=toRad(lon2-lon1);
+    const y = Math.sin(Δλ)*Math.cos(φ2);
+    const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+    let θ = toDeg(Math.atan2(y,x));
+    return (θ+360)%360;
+  }
+  function distanceKm(lat1,lon1,lat2,lon2){
+    const R=6371;
+    const φ1=toRad(lat1), φ2=toRad(lat2);
+    const Δφ=toRad(lat2-lat1), Δλ=toRad(lon2-lon1);
+    const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+    return R * 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  // 目盛り描画
+  const tickGroup = $('tickGroup');
+  for(let d=0; d<360; d+=10){
+    const rad = toRad(d);
+    const isMajor = d % 30 === 0;
+    const r1 = 140, r2 = isMajor ? 128 : 133;
+    const x1 = 150 + r1*Math.sin(rad), y1 = 150 - r1*Math.cos(rad);
+    const x2 = 150 + r2*Math.sin(rad), y2 = 150 - r2*Math.cos(rad);
+    const line = document.createElementNS("http://www.w3.org/2000/svg","line");
+    line.setAttribute("x1",x1);line.setAttribute("y1",y1);
+    line.setAttribute("x2",x2);line.setAttribute("y2",y2);
+    line.setAttribute("stroke", isMajor ? "#3d4750" : "#1e2833");
+    line.setAttribute("stroke-width", isMajor ? 2 : 1);
+    tickGroup.appendChild(line);
+  }
+
+  function updateTargetInfo(){
+    targetBearingEl.innerHTML = (myLat!==null) ? Math.round(bearingTo(myLat,myLon,targetLat,targetLon)) + '<span>°</span>' : '--<span>°</span>';
+    targetDistanceEl.innerHTML = (myLat!==null) ? distanceKm(myLat,myLon,targetLat,targetLon).toFixed(1) + '<span>km</span>' : '--<span>km</span>';
+  }
+
+  const NEAR_THRESHOLD_M = 100; // このしきい値(m)より近いと「目標付近にいる」扱いにする
+  const dialArea = document.querySelector('.dial-area');
+
+  function render(){
+    if(myLat===null || heading===null) return;
+    const brg = bearingTo(myLat,myLon,targetLat,targetLon);
+    const distM = distanceKm(myLat,myLon,targetLat,targetLon) * 1000;
+
+    if(distM < NEAR_THRESHOLD_M){
+      // 目標付近にいる場合は矢印を表示せず、専用メッセージにする
+      dialArea.style.opacity = '0.35';
+      arrowGroup.style.opacity = '0';
+      degReadout.innerHTML = Math.round(heading) + '<span>°</span>';
+      diffReadout.classList.remove('left','right','locked');
+      diffReadout.textContent = '📍 ' + targetName + ' 付近にいます（半径' + NEAR_THRESHOLD_M + 'm以内）';
+      updateTargetInfo();
+      return;
+    } else {
+      dialArea.style.opacity = '1';
+      arrowGroup.style.opacity = '1';
+    }
+
+    // 矢印は「目標方位 - 自分の向いてる方位」だけ回転させる（画面上での相対角）
+    const relative = (brg - heading + 360) % 360;
+    arrowGroup.style.transform = `rotate(${relative}deg)`;
+    // コンパスローズは自分の向きに応じて回す（Nがどこにあるか分かるように）
+    roseGroup.style.transform = `rotate(${-heading}deg)`;
+
+    degReadout.innerHTML = Math.round(heading) + '<span>°</span>';
+
+    let diff = relative;
+    if(diff > 180) diff -= 360;
+    const absDiff = Math.abs(diff);
+    diffReadout.classList.remove('left','right','locked');
+    if(absDiff < 5){
+      diffReadout.classList.add('locked');
+      diffReadout.textContent = '';
+      diffReadout.classList.add('locked');
+    } else if(diff < 0){
+      diffReadout.classList.add('left');
+      diffReadout.textContent = Math.round(absDiff) + '°';
+    } else {
+      diffReadout.classList.add('right');
+      diffReadout.textContent = Math.round(absDiff) + '°';
+    }
+    updateTargetInfo();
+  }
+
+  function onOrientation(e){
+    let h = null;
+    let src = '';
+    if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)){
+      h = e.webkitCompassHeading + DECLINATION;
+      src = 'iOS webkitCompassHeading';
+    } else if (e.alpha !== null && e.alpha !== undefined){
+      h = (360 - e.alpha + DECLINATION) % 360;
+      src = (e.absolute ? 'absolute alpha' : 'alpha(相対値の可能性あり)');
+    }
+    if(h !== null){
+      heading = (h+360)%360;
+      compassDot.classList.add('ok');
+      compassDot.classList.remove('bad');
+      debugLines.ori = 'コンパス: ' + Math.round(heading) + '° [' + src + ']';
+    } else {
+      debugLines.ori = 'コンパス: イベントは発火してるが値が取れていません';
+    }
+    paintDebug();
+    render();
+  }
+
+  function onPosition(pos){
+    myLat = pos.coords.latitude;
+    myLon = pos.coords.longitude;
+    gpsDot.classList.add('ok');
+    gpsDot.classList.remove('bad');
+    debugLines.gps = 'GPS: ' + myLat.toFixed(5) + ', ' + myLon.toFixed(5) + '（精度 ±' + Math.round(pos.coords.accuracy) + 'm）';
+    paintDebug();
+    render();
+  }
+  function onPositionError(err){
+    gpsDot.classList.add('bad');
+    gpsDot.classList.remove('ok');
+    const msgs = {1:'許可が拒否されました', 2:'位置情報を取得できません', 3:'タイムアウトしました'};
+    debugLines.gps = 'GPS エラー: ' + (msgs[err.code] || err.message);
+    paintDebug();
+  }
+
+  $('startBtn').addEventListener('click', async function(){
+    // iOS 13+ はジャイロ/コンパスの許可を明示的にリクエストする必要がある
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+      try{
+        const res = await DeviceOrientationEvent.requestPermission();
+        if(res !== 'granted'){
+          diffReadout.textContent = 'コンパスの許可が得られませんでした';
+          return;
+        }
+      }catch(err){
+        diffReadout.textContent = '許可の取得でエラーが発生しました';
+        return;
+      }
+    }
+
+    if('ondeviceorientationabsolute' in window){
+      window.addEventListener('deviceorientationabsolute', onOrientation, true);
+      debugLines.mode = 'モード: deviceorientationabsolute リスナー登録済み';
+    } else if (typeof DeviceOrientationEvent !== 'undefined'){
+      window.addEventListener('deviceorientation', onOrientation, true);
+      debugLines.mode = 'モード: deviceorientation リスナー登録済み（絶対方位非対応の可能性）';
+    } else {
+      debugLines.mode = 'モード: この端末/ブラウザは方位センサーAPI非対応です';
+    }
+    paintDebug();
+
+    if(navigator.geolocation){
+      navigator.geolocation.getCurrentPosition(onPosition, onPositionError, {enableHighAccuracy:true, timeout:10000});
+      watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, {
+        enableHighAccuracy:true, maximumAge:1000, timeout:10000
+      });
+    } else {
+      gpsDot.classList.add('bad');
+      debugLines.gps = 'GPS: このブラウザは位置情報APIに対応していません';
+      paintDebug();
+    }
+    this.textContent = '計測中…（画面をつけたままにしてください）';
+    setTimeout(function(){
+      if(heading===null){
+        debugLines.ori = debugLines.ori + '　※10秒経っても値が来ない場合、スマホを8の字に振ってみてください（キャリブレーション）';
+        paintDebug();
+      }
+    }, 10000);
+  });
+
+  document.querySelectorAll('.chip').forEach(chip=>{
+    chip.addEventListener('click', function(){
+      document.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
+      this.classList.add('active');
+      targetLat = parseFloat(this.dataset.lat);
+      targetLon = parseFloat(this.dataset.lon);
+      targetName = this.dataset.name;
+      render();
+      updateTargetInfo();
+    });
+  });
+
+  $('addCustom').addEventListener('click', function(){
+    const lat = parseFloat($('customLat').value);
+    const lon = parseFloat($('customLon').value);
+    if(isNaN(lat) || isNaN(lon)){
+      alert('緯度・経度を正しく入力してください');
+      return;
+    }
+    const targetsDiv = $('targets');
+    document.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
+    const chip = document.createElement('div');
+    chip.className = 'chip active';
+    chip.dataset.name = 'カスタム地点';
+    chip.dataset.lat = lat;
+    chip.dataset.lon = lon;
+    chip.textContent = 'カスタム地点';
+    chip.addEventListener('click', function(){
+      document.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
+      this.classList.add('active');
+      targetLat = lat; targetLon = lon; targetName='カスタム地点';
+      render(); updateTargetInfo();
+    });
+    targetsDiv.appendChild(chip);
+    targetLat = lat; targetLon = lon; targetName = 'カスタム地点';
+    render();
+    updateTargetInfo();
+  });
+
+  updateTargetInfo();
+})();
+</script>
+</body>
+</html>
