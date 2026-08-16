@@ -153,20 +153,20 @@
   }
   .ar-marker{
     position:absolute;top:38%;transform:translate(-50%,-50%);
-    display:flex;flex-direction:column;align-items:center;gap:2px;
-    transition:left .08s linear;
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+    transition:left .08s linear, top .15s ease;
   }
   .ar-marker .icon{
-    font-size:30px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.6));
+    font-size:44px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.7));
   }
   .ar-marker .label{
-    font-family:var(--mono);font-size:12px;font-weight:700;color:#fff;
-    background:rgba(10,14,19,.72);border:1px solid rgba(255,255,255,.15);
-    padding:3px 9px;border-radius:20px;white-space:nowrap;
+    font-family:var(--mono);font-size:13px;font-weight:700;color:#fff;
+    background:rgba(10,14,19,.78);border:1px solid rgba(255,255,255,.15);
+    padding:4px 11px;border-radius:20px;white-space:nowrap;
   }
   .ar-marker .dist{
-    font-family:var(--mono);font-size:10px;color:var(--amber);
-    background:rgba(10,14,19,.72);padding:1px 8px;border-radius:10px;
+    font-family:var(--mono);font-size:11px;color:var(--amber);
+    background:rgba(10,14,19,.78);padding:2px 9px;border-radius:10px;
   }
   .ar-marker.selected .label{border-color:var(--amber);color:var(--amber);}
   .ar-edge{
@@ -199,9 +199,25 @@
   .ar-crosshair::before{left:50%;top:0;width:1px;height:100%;transform:translateX(-50%);}
   .ar-crosshair::after{top:50%;left:0;height:1px;width:100%;transform:translateY(-50%);}
   .ar-msg{
-    position:absolute;bottom:calc(env(safe-area-inset-bottom,16px) + 20px);left:16px;right:16px;
+    position:absolute;bottom:calc(env(safe-area-inset-bottom,16px) + 78px);left:16px;right:16px;
     text-align:center;font-family:var(--mono);font-size:13px;color:var(--sub);
   }
+  .ar-target-panel{
+    position:absolute;bottom:0;left:0;right:0;
+    padding:10px 12px calc(env(safe-area-inset-bottom,10px) + 10px);
+    background:linear-gradient(0deg,rgba(0,0,0,.7),transparent);
+    display:flex;gap:8px;overflow-x:auto;pointer-events:auto;
+  }
+  .ar-toggle-chip{
+    flex:0 0 auto;
+    display:flex;align-items:center;gap:5px;
+    background:rgba(15,21,28,.85);border:1px solid var(--line);
+    border-radius:20px;padding:6px 12px 6px 8px;
+    font-size:12px;color:var(--sub);white-space:nowrap;
+  }
+  .ar-toggle-chip .icon{font-size:16px;}
+  .ar-toggle-chip.on{border-color:var(--cyan);color:var(--cyan);}
+  .ar-toggle-chip.on{background:rgba(47,224,197,.12);}
 
 </style>
 </head>
@@ -299,6 +315,7 @@
     <button class="ar-close" id="arCloseBtn">✕ 閉じる</button>
   </div>
   <div class="ar-msg" id="arMsg"></div>
+  <div class="ar-target-panel" id="arTargetPanel"></div>
 </div>
 
 <script>
@@ -374,8 +391,9 @@
   const FOV_HALF = 32; // カメラの想定水平画角の半分(度)。多くのスマホの背面広角相当
   let arMode = false;
   let arStream = null;
+  let arVisibleNames = null; // null = 未初期化。初期化時に全ターゲットをONにする
   const arView = $('arView'), arVideo = $('arVideo'), arOverlay = $('arOverlay');
-  const arHeadingEl = $('arHeading'), arMsg = $('arMsg');
+  const arHeadingEl = $('arHeading'), arMsg = $('arMsg'), arTargetPanel = $('arTargetPanel');
 
   function getAllTargets(){
     const list = [];
@@ -391,13 +409,42 @@
     return list;
   }
 
+  function buildArTargetPanel(){
+    const all = getAllTargets();
+    if(arVisibleNames === null){
+      arVisibleNames = new Set(all.map(t=>t.name)); // 初回は全部ON
+    }
+    arTargetPanel.innerHTML = '';
+    all.forEach(t=>{
+      const on = arVisibleNames.has(t.name);
+      const el = document.createElement('div');
+      el.className = 'ar-toggle-chip' + (on ? ' on' : '');
+      el.innerHTML = `<span class="icon">${t.icon}</span><span>${t.name}</span>`;
+      el.addEventListener('click', function(){
+        if(arVisibleNames.has(t.name)){
+          arVisibleNames.delete(t.name);
+          el.classList.remove('on');
+        } else {
+          arVisibleNames.add(t.name);
+          el.classList.add('on');
+        }
+        renderAR();
+      });
+      arTargetPanel.appendChild(el);
+    });
+  }
+
   function renderAR(){
     if(myLat===null || heading===null) return;
     arHeadingEl.textContent = Math.round(heading) + '°';
     arOverlay.innerHTML = '';
     let edgeInfo = null; // 選択中ターゲットが画角外のときの案内
 
+    // 画角内に入る候補を先に集めてから、角度が近いものを縦にずらして重なりを防ぐ
+    const inView = [];
     getAllTargets().forEach(t=>{
+      if(arVisibleNames && !arVisibleNames.has(t.name)) return; // 非表示に設定された局はスキップ
+
       const distM = distanceKm(myLat,myLon,t.lat,t.lon) * 1000;
       if(distM < NEAR_THRESHOLD_M) return; // 自分がその場所にいる場合は表示しない
 
@@ -406,17 +453,32 @@
       if(diff > 180) diff -= 360; // -180〜180に正規化
 
       if(Math.abs(diff) <= FOV_HALF){
-        // 画角内 → マーカーを配置
-        const xPercent = 50 + (diff / FOV_HALF) * 50;
-        const marker = document.createElement('div');
-        marker.className = 'ar-marker' + (t.selected ? ' selected' : '');
-        marker.style.left = xPercent + '%';
-        const distLabel = distM >= 1000 ? (distM/1000).toFixed(1)+'km' : Math.round(distM)+'m';
-        marker.innerHTML = `<div class="icon">${t.icon}</div><div class="label">${t.name}</div><div class="dist">${distLabel}</div>`;
-        arOverlay.appendChild(marker);
+        inView.push({t, diff, distM});
       } else if(t.selected){
         edgeInfo = diff; // 選択中の地点が画角外なら、どちら向きに振ればいいか記録
       }
+    });
+
+    // 角度でソートし、近い(重なりそうな)もの同士は縦に段差をつける
+    inView.sort((a,b)=>a.diff-b.diff);
+    const STACK_THRESHOLD_DEG = 6; // これより角度差が小さいと「重なる」とみなす
+    let lastDiff = null, stackLevel = 0;
+    inView.forEach(item=>{
+      if(lastDiff !== null && Math.abs(item.diff - lastDiff) < STACK_THRESHOLD_DEG){
+        stackLevel++;
+      } else {
+        stackLevel = 0;
+      }
+      lastDiff = item.diff;
+
+      const xPercent = 50 + (item.diff / FOV_HALF) * 50;
+      const marker = document.createElement('div');
+      marker.className = 'ar-marker' + (item.t.selected ? ' selected' : '');
+      marker.style.left = xPercent + '%';
+      marker.style.top = (38 + stackLevel * 15) + '%';
+      const distLabel = item.distM >= 1000 ? (item.distM/1000).toFixed(1)+'km' : Math.round(item.distM)+'m';
+      marker.innerHTML = `<div class="icon">${item.t.icon}</div><div class="label">${item.t.name}</div><div class="dist">${distLabel}</div>`;
+      arOverlay.appendChild(marker);
     });
 
     arOverlay.querySelectorAll('.ar-edge').forEach(el=>el.remove());
@@ -440,6 +502,7 @@
       arVideo.srcObject = arStream;
       arView.classList.add('on');
       arMode = true;
+      buildArTargetPanel();
       renderAR();
     }catch(err){
       alert('カメラを開始できませんでした: ' + err.message + '\n（ブラウザの設定でカメラの許可が必要です）');
@@ -644,9 +707,10 @@
     });
     targetsDiv.appendChild(chip);
     targetLat = lat; targetLon = lon; targetName = 'カスタム地点'; targetIcon = '📍';
+    if(arVisibleNames) arVisibleNames.add('カスタム地点');
     render();
     updateTargetInfo();
-    if(arMode) renderAR();
+    if(arMode){ buildArTargetPanel(); renderAR(); }
   });
 
   updateTargetInfo();
