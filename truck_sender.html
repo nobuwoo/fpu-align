@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>中継車 位置送信</title>
+<style>
+  :root{
+    --bg:#0a0e13;--panel:#0f151c;--line:#1e2833;--amber:#ff8a3d;
+    --cyan:#2fe0c5;--text:#e6ecf0;--sub:#6b7885;--danger:#ff4d4d;
+    --mono:"SF Mono","JetBrains Mono",Consolas,monospace;
+    --sans:-apple-system,"Hiragino Sans","Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;min-height:100dvh;background:var(--bg);color:var(--text);
+    font-family:var(--sans);display:flex;flex-direction:column;
+    padding:env(safe-area-inset-top,20px) 20px calc(env(safe-area-inset-bottom,20px)+20px);
+  }
+  h1{font-size:15px;letter-spacing:.1em;color:var(--sub);text-transform:uppercase;margin:8px 0 20px;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px;}
+  .card .label{font-size:11px;color:var(--sub);letter-spacing:.08em;margin-bottom:6px;text-transform:uppercase;}
+  .card input{
+    width:100%;background:#070a0d;border:1px solid var(--line);border-radius:8px;
+    color:var(--text);font-family:var(--mono);font-size:13px;padding:10px;
+  }
+  .value{font-family:var(--mono);font-size:22px;font-weight:700;}
+  .value.dim{color:var(--sub);font-size:14px;font-weight:400;}
+  .status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--sub);margin-right:6px;}
+  .status-dot.ok{background:var(--cyan);box-shadow:0 0 8px var(--cyan);}
+  .status-dot.bad{background:var(--danger);}
+  .btn{
+    background:var(--amber);color:#1a0f05;border:none;border-radius:14px;
+    padding:16px;font-size:16px;font-weight:700;margin-top:auto;
+  }
+  .btn.stop{background:#2a3540;color:var(--text);}
+  .log{font-family:var(--mono);font-size:11px;color:var(--sub);margin-top:10px;line-height:1.7;max-height:120px;overflow-y:auto;}
+</style>
+</head>
+<body>
+  <h1>📡 中継車 位置送信</h1>
+
+  <div class="card">
+    <div class="label">送信先 GAS Web App URL</div>
+    <input type="text" id="url" placeholder="https://script.google.com/macros/s/.../exec">
+  </div>
+
+  <div class="card">
+    <div class="label"><span class="status-dot" id="dot"></span>現在地</div>
+    <div class="value" id="posValue">未取得</div>
+    <div class="value dim" id="accValue"></div>
+  </div>
+
+  <div class="card">
+    <div class="label">送信ログ</div>
+    <div class="log" id="log">まだ送信していません</div>
+  </div>
+
+  <button class="btn" id="toggleBtn">送信を開始</button>
+
+<script>
+  const $ = id => document.getElementById(id);
+  let watchId = null, sendTimer = null, sending = false;
+  let curLat = null, curLon = null;
+
+  function log(msg){
+    const el = $('log');
+    const t = new Date().toLocaleTimeString('ja-JP');
+    el.innerHTML = `[${t}] ${msg}<br>` + el.innerHTML;
+  }
+
+  function onPos(pos){
+    curLat = pos.coords.latitude;
+    curLon = pos.coords.longitude;
+    $('dot').classList.add('ok');
+    $('posValue').textContent = curLat.toFixed(5) + ', ' + curLon.toFixed(5);
+    $('accValue').textContent = '精度 ±' + Math.round(pos.coords.accuracy) + 'm';
+  }
+  function onPosErr(err){
+    $('dot').classList.add('bad');
+    log('GPS エラー: ' + err.message);
+  }
+
+  async function sendOnce(){
+    if(curLat === null) return;
+    const url = $('url').value.trim();
+    if(!url) return;
+    try{
+      await fetch(url, {
+        method: 'POST',
+        body: JSON.stringify({ lat: curLat, lon: curLon })
+      });
+      log('送信OK: ' + curLat.toFixed(5) + ', ' + curLon.toFixed(5));
+    }catch(err){
+      log('送信エラー: ' + err.message);
+    }
+  }
+
+  $('toggleBtn').addEventListener('click', function(){
+    if(!sending){
+      const url = $('url').value.trim();
+      if(!url){ alert('GAS Web AppのURLを入力してください'); return; }
+      watchId = navigator.geolocation.watchPosition(onPos, onPosErr, {enableHighAccuracy:true, maximumAge:1000});
+      sendTimer = setInterval(sendOnce, 5000);
+      sending = true;
+      this.textContent = '送信を停止';
+      this.classList.add('stop');
+      log('送信を開始しました（5秒おき）');
+    } else {
+      if(watchId) navigator.geolocation.clearWatch(watchId);
+      if(sendTimer) clearInterval(sendTimer);
+      sending = false;
+      this.textContent = '送信を開始';
+      this.classList.remove('stop');
+      log('送信を停止しました');
+    }
+  });
+</script>
+</body>
+</html>
