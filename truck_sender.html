@@ -81,6 +81,36 @@
     log('GPS エラー: ' + err.message);
   }
 
+  // ---- Wake Lock: 送信中は画面が自動で消えないようにする ----
+  let wakeLock = null;
+  async function requestWakeLock(){
+    if(!('wakeLock' in navigator)){
+      log('この端末/ブラウザはWake Lockに対応していません（手動で画面ロックをオフにしてください）');
+      return;
+    }
+    try{
+      wakeLock = await navigator.wakeLock.request('screen');
+      log('画面スリープを防止しました');
+      wakeLock.addEventListener('release', ()=>{
+        log('画面スリープ防止が解除されました');
+      });
+    }catch(err){
+      log('画面スリープ防止に失敗: ' + err.message);
+    }
+  }
+  function releaseWakeLock(){
+    if(wakeLock){
+      wakeLock.release();
+      wakeLock = null;
+    }
+  }
+  // アプリを他画面に切り替えて戻ってきたとき、送信中なら再取得する
+  document.addEventListener('visibilitychange', function(){
+    if(sending && document.visibilityState === 'visible' && wakeLock === null){
+      requestWakeLock();
+    }
+  });
+
   async function sendOnce(){
     if(curLat === null) return;
     const url = $('url').value.trim();
@@ -106,6 +136,7 @@
       this.textContent = '送信を停止';
       this.classList.add('stop');
       log('送信を開始しました（5秒おき）');
+      requestWakeLock();
     } else {
       if(watchId) navigator.geolocation.clearWatch(watchId);
       if(sendTimer) clearInterval(sendTimer);
@@ -113,6 +144,7 @@
       this.textContent = '送信を開始';
       this.classList.remove('stop');
       log('送信を停止しました');
+      releaseWakeLock();
     }
   });
 </script>
